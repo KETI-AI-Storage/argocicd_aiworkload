@@ -57,6 +57,16 @@ spec:
         workload-type: text
     podSpecPatch: |
       shareProcessNamespace: true
+      volumes:
+      - name: podinfo
+        downwardAPI:
+          items:
+          - path: "labels"
+            fieldRef:
+              fieldPath: metadata.labels
+          - path: "annotations"
+            fieldRef:
+              fieldPath: metadata.annotations
     sidecars:
     - name: insight-trace
       image: ketidevit2/insight-trace:latest
@@ -80,6 +90,8 @@ spec:
         value: "preprocess"
       - name: REPORT_INTERVAL
         value: "15s"
+      - name: IS_PIPELINE
+        value: "true"
       resources:
         requests:
           cpu: "50m"
@@ -87,6 +99,9 @@ spec:
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
+        readOnly: true
+      - name: podinfo
+        mountPath: /etc/podinfo
         readOnly: true
     container:
       image: python:3.11-slim
@@ -147,6 +162,16 @@ spec:
         workload-type: text
     podSpecPatch: |
       shareProcessNamespace: true
+      volumes:
+      - name: podinfo
+        downwardAPI:
+          items:
+          - path: "labels"
+            fieldRef:
+              fieldPath: metadata.labels
+          - path: "annotations"
+            fieldRef:
+              fieldPath: metadata.annotations
     sidecars:
     - name: insight-trace
       image: ketidevit2/insight-trace:latest
@@ -170,6 +195,8 @@ spec:
         value: "train"
       - name: REPORT_INTERVAL
         value: "15s"
+      - name: IS_PIPELINE
+        value: "true"
       resources:
         requests:
           cpu: "50m"
@@ -177,6 +204,9 @@ spec:
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
+        readOnly: true
+      - name: podinfo
+        mountPath: /etc/podinfo
         readOnly: true
     container:
       image: python:3.11-slim
@@ -263,6 +293,16 @@ spec:
         workload-type: text
     podSpecPatch: |
       shareProcessNamespace: true
+      volumes:
+      - name: podinfo
+        downwardAPI:
+          items:
+          - path: "labels"
+            fieldRef:
+              fieldPath: metadata.labels
+          - path: "annotations"
+            fieldRef:
+              fieldPath: metadata.annotations
     sidecars:
     - name: insight-trace
       image: ketidevit2/insight-trace:latest
@@ -286,6 +326,8 @@ spec:
         value: "evaluate"
       - name: REPORT_INTERVAL
         value: "15s"
+      - name: IS_PIPELINE
+        value: "true"
       resources:
         requests:
           cpu: "50m"
@@ -293,6 +335,9 @@ spec:
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
+        readOnly: true
+      - name: podinfo
+        mountPath: /etc/podinfo
         readOnly: true
     container:
       image: python:3.11-slim

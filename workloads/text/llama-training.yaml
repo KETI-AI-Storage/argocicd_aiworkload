@@ -153,6 +153,8 @@ spec:
           value: "10s"
         - name: REPORT_INTERVAL
           value: "30s"
+        - name: IS_PIPELINE
+          value: "false"
         resources:
           requests:
             cpu: "50m"
@@ -164,10 +166,22 @@ spec:
         - name: data-volume
           mountPath: /data
           readOnly: true
+        - name: podinfo
+          mountPath: /etc/podinfo
+          readOnly: true
 
       volumes:
       - name: data-volume
         emptyDir:
           sizeLimit: 1Gi
+      - name: podinfo
+        downwardAPI:
+          items:
+          - path: "labels"
+            fieldRef:
+              fieldPath: metadata.labels
+          - path: "annotations"
+            fieldRef:
+              fieldPath: metadata.annotations
 
       restartPolicy: Never
