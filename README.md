@@ -1,54 +1,112 @@
-# KETI AI Storage - Argo CD Workload Test
+# KETI AI Storage - Argo CD + Kubeflow Pipeline
 
-KETI AI Storage 시스템의 Argo CD 연동 테스트용 워크로드 레포지토리입니다.
+KETI AI Storage 시스템의 Argo CD + Kubeflow 연동 테스트용 레포지토리입니다.
 
-## 워크로드 구성
+## 아키텍처
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          GitHub Repository                               │
+│  ┌─────────────┐                    ┌─────────────┐                     │
+│  │  workloads/ │                    │  pipelines/ │                     │
+│  │ (단순 Pod)  │                    │(DAG 파이프라인)│                    │
+│  └──────┬──────┘                    └──────┬──────┘                     │
+└─────────┼──────────────────────────────────┼────────────────────────────┘
+          │                                  │
+          ▼                                  ▼
+┌─────────────────┐              ┌─────────────────┐
+│    Argo CD      │              │    Argo CD      │
+│  (Application 1)│              │  (Application 2)│
+└────────┬────────┘              └────────┬────────┘
+         │                                │
+         ▼                                ▼
+┌─────────────────┐              ┌─────────────────────────┐
+│ ai-workload-test│              │ kubeflow-user-example-com│
+│   (Namespace)   │              │      (Namespace)        │
+│                 │              │                         │
+│ • bert-inference│              │  ┌─────────────────┐    │
+│ • yolo-inference│              │  │ DAG Pipeline    │    │
+│ • llama-training│              │  │                 │    │
+│ • resnet-training│             │  │ preprocess      │    │
+└────────┬────────┘              │  │     ↓           │    │
+         │                       │  │ train (GPU)     │    │
+         │                       │  │     ↓           │    │
+         │                       │  │ evaluate        │    │
+         │                       │  └────────┬────────┘    │
+         │                       └───────────┼─────────────┘
+         │                                   │
+         └──────────────┬────────────────────┘
+                        │ insight-trace (sidecar)
+                        ▼
+              ┌─────────────────┐
+              │     APOLLO      │
+              │ (Policy Server) │
+              └─────────────────┘
+```
+
+## Kubeflow Pipeline (DAG)
+
+### LLaMA Training Pipeline
+
+```
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│  preprocess  │───▶│    train     │───▶│   evaluate   │
+│              │    │   (GPU)      │    │              │
+│ - tokenize   │    │ - 3 epochs   │    │ - perplexity │
+│ - batching   │    │ - checkpoint │    │ - BLEU score │
+└──────────────┘    └──────────────┘    └──────────────┘
+      2분                 5분                 2분
+```
+
+각 단계에 insight-trace 사이드카가 포함되어 APOLLO로 WorkloadSignature 전송.
+
+## 단순 워크로드
 
 ### TEXT Workloads (NLP)
 | 워크로드 | 타입 | 프레임워크 | 설명 |
 |---------|------|-----------|------|
-| `llama-training` | Job | PyTorch + HuggingFace | LLaMA 모델 학습 (약 25분) |
-| `bert-inference` | Deployment | PyTorch + HuggingFace | BERT 추론 서비스 (지속 실행) |
+| `llama-training` | Job | PyTorch + HuggingFace | LLaMA 모델 학습 (GPU) |
+| `bert-inference` | Deployment | PyTorch + HuggingFace | BERT 추론 서비스 |
 
 ### IMAGE Workloads (Computer Vision)
 | 워크로드 | 타입 | 프레임워크 | 설명 |
 |---------|------|-----------|------|
-| `resnet-training` | Job | PyTorch + TorchVision | ResNet50 이미지 분류 학습 (약 20분) |
-| `yolo-inference` | Deployment | PyTorch + Ultralytics | YOLOv8 객체 탐지 서비스 (지속 실행) |
-
-## 주요 특징
-
-- **insight-trace 사이드카**: 모든 워크로드에 insight-trace 사이드카가 포함되어 동적 분석 수행
-- **shareProcessNamespace**: 사이드카가 메인 컨테이너의 프로세스를 감지할 수 있도록 설정
-- **APOLLO 연동**: insight-trace가 APOLLO로 WorkloadSignature 전송
-- **장시간 실행**: 타입 감지를 위해 충분히 오래 실행되도록 설계
+| `resnet-training` | Job | PyTorch + TorchVision | ResNet50 이미지 분류 학습 |
+| `yolo-inference` | Deployment | PyTorch + Ultralytics | YOLOv8 객체 탐지 서비스 |
 
 ## 사용 방법
 
-### 1. Argo CD Application 등록
+### 1. Argo CD Applications 등록
 ```bash
-kubectl apply -f argocd/application.yaml
+# 단순 워크로드 + Kubeflow Pipeline 모두 등록
+kubectl apply -f argocd/
+
+# 또는 개별 등록
+kubectl apply -f argocd/application.yaml          # 단순 워크로드
+kubectl apply -f argocd/pipeline-application.yaml # Kubeflow Pipeline
 ```
 
 ### 2. 동기화 상태 확인
 ```bash
-# CLI
-argocd app get keti-ai-workload-test
-
-# 또는 UI
-kubectl port-forward svc/argocd-server -n argocd 8443:443
-# https://localhost:8443 접속
+kubectl get application -n argocd
 ```
 
-### 3. 워크로드 상태 확인
+### 3. Pipeline 실행 상태 확인
 ```bash
+# Kubeflow Pipeline (Argo Workflow)
+kubectl get workflows -n kubeflow-user-example-com
+
+# 단순 워크로드
 kubectl get pods -n ai-workload-test
 ```
 
 ### 4. 모니터링
 ```bash
-# 통합 모니터링 (insight-scope + insight-trace + APOLLO)
+# 단순 워크로드 모니터링
 /root/workspace/integration-test/scripts/monitor-all.sh ai-workload-test
+
+# Pipeline 모니터링
+/root/workspace/integration-test/scripts/monitor-all.sh kubeflow-user-example-com
 ```
 
 ## 디렉토리 구조
@@ -57,26 +115,22 @@ kubectl get pods -n ai-workload-test
 argocicd_aiworload/
 ├── README.md
 ├── argocd/
-│   └── application.yaml      # Argo CD Application 정의
-└── workloads/
-    ├── kustomization.yaml    # Kustomize 설정
-    ├── namespace.yaml        # ai-workload-test 네임스페이스
-    ├── text/
-    │   ├── llama-training.yaml
-    │   └── bert-inference.yaml
-    └── image/
-        ├── resnet-training.yaml
-        └── yolo-inference.yaml
+│   ├── application.yaml          # 단순 워크로드 Application
+│   ├── pipeline-application.yaml # Kubeflow Pipeline Application
+│   └── kustomization.yaml
+├── workloads/                    # 단순 Pod 워크로드
+│   ├── kustomization.yaml
+│   ├── namespace.yaml
+│   ├── text/
+│   │   ├── llama-training.yaml
+│   │   └── bert-inference.yaml
+│   └── image/
+│       ├── resnet-training.yaml
+│       └── yolo-inference.yaml
+└── pipelines/                    # Kubeflow DAG 파이프라인
+    ├── kustomization.yaml
+    └── llama-training-pipeline.yaml
 ```
-
-## 프로세스 키워드 (insight-trace 감지용)
-
-| 워크로드 | 프로세스 이름 | 감지 키워드 |
-|---------|--------------|------------|
-| llama-training | `llama_pytorch_huggingface_trainer.py` | llama, pytorch, huggingface |
-| bert-inference | `bert_transformer_pytorch_inference.py` | bert, transformer, pytorch |
-| resnet-training | `resnet50_torchvision_image_trainer.py` | resnet, torchvision, image |
-| yolo-inference | `yolov8_opencv_image_detector.py` | yolo, opencv, image, detector |
 
 ## 관련 프로젝트
 
