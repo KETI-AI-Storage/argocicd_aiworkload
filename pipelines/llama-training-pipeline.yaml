@@ -6,7 +6,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: llama-training-pipeline-
+  name: llama-training-pipeline
   namespace: kubeflow-user-example-com
   labels:
     app: llama-pipeline

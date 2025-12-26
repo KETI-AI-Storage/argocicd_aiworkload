@@ -3,8 +3,3 @@ kind: Kustomization
 
 resources:
   - llama-training-pipeline.yaml
-
-commonLabels:
-  app.kubernetes.io/managed-by: argocd
-  project: keti-ai-storage
-  component: pipeline
