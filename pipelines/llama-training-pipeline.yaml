@@ -1,7 +1,7 @@
 ###############################################################################
 # LLaMA Training Pipeline (Kubeflow/Argo Workflow)
 # DAG: 데이터전처리 → 모델학습 → 모델평가
-# 각 단계에 insight-trace 사이드카 포함
+# AI Storage Scheduler 사용
 ###############################################################################
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
@@ -14,6 +14,7 @@ metadata:
     framework: pytorch
 spec:
   entrypoint: llama-pipeline
+  serviceAccountName: default-editor
 
   # 공유 볼륨 (단계 간 데이터 전달)
   volumeClaimTemplates:
@@ -48,61 +49,21 @@ spec:
         dependencies: [train]
 
   #===========================================================================
-  # Step 1: 데이터 전처리
+  # Step 1: 데이터 전처리 (AI Storage Scheduler)
   #===========================================================================
   - name: preprocess-step
     metadata:
       labels:
         pipeline-step: preprocess
         workload-type: text
-    podSpecPatch: |
-      shareProcessNamespace: true
-      volumes:
-      - name: podinfo
-        downwardAPI:
-          items:
-          - path: "labels"
-            fieldRef:
-              fieldPath: metadata.labels
-          - path: "annotations"
-            fieldRef:
-              fieldPath: metadata.annotations
-    sidecars:
-    - name: insight-trace
-      image: ketidevit2/insight-trace:latest
-      imagePullPolicy: Always
-      env:
-      - name: POD_NAME
-        valueFrom:
-          fieldRef:
-            fieldPath: metadata.name
-      - name: POD_NAMESPACE
-        valueFrom:
-          fieldRef:
-            fieldPath: metadata.namespace
-      - name: NODE_NAME
-        valueFrom:
-          fieldRef:
-            fieldPath: spec.nodeName
-      - name: APOLLO_ENDPOINT
-        value: "apollo-policy-server.keti.svc.cluster.local:50051"
-      - name: PIPELINE_STEP
-        value: "preprocess"
-      - name: REPORT_INTERVAL
-        value: "15s"
-      - name: IS_PIPELINE
-        value: "true"
-      resources:
-        requests:
-          cpu: "50m"
-          memory: "64Mi"
-      volumeMounts:
-      - name: pipeline-data
-        mountPath: /data
-        readOnly: true
-      - name: podinfo
-        mountPath: /etc/podinfo
-        readOnly: true
+      annotations:
+        ai-storage.keti/preprocessing-type: "transformation"
+        ai-storage.keti/io-pattern: "write-heavy"
+        ai-storage.keti/workload-stage: "preprocessing"
+    # AI Storage Scheduler 사용
+    schedulerName: ai-storage-scheduler
+    tolerations:
+    - operator: Exists
     container:
       image: python:3.11-slim
       command: [python3, -c]
@@ -113,101 +74,59 @@ spec:
         import os
 
         sys.argv[0] = 'llama_data_preprocessor.py'
+        node = os.environ.get('NODE_NAME', 'unknown')
 
         print("=" * 60)
         print("[STEP 1/3] Data Preprocessing")
+        print(f"Scheduled Node: {node}")
         print("=" * 60)
         print("Task: Tokenization & Data Preparation for LLaMA")
 
         os.makedirs('/data/processed', exist_ok=True)
         os.makedirs('/data/tokens', exist_ok=True)
 
-        # 전처리 단계 시뮬레이션
         stages = ['load_dataset', 'tokenize', 'create_batches', 'save_processed']
         for i, stage in enumerate(stages):
             print(f"\n[{time.strftime('%H:%M:%S')}] Stage {i+1}/4: {stage}")
-
-            # I/O 작업 시뮬레이션
             with open(f'/data/processed/{stage}.bin', 'wb') as f:
-                f.write(os.urandom(5 * 1024 * 1024))  # 5MB
+                f.write(os.urandom(5 * 1024 * 1024))
+            time.sleep(15)
 
-            time.sleep(30)  # 30초씩 (총 2분)
-
-        # 최종 토큰 데이터 저장
         with open('/data/tokens/train_tokens.bin', 'wb') as f:
-            f.write(os.urandom(20 * 1024 * 1024))  # 20MB
+            f.write(os.urandom(20 * 1024 * 1024))
 
         print("\n" + "=" * 60)
         print("[STEP 1/3] Preprocessing COMPLETED")
-        print("Output: /data/tokens/train_tokens.bin")
+        print(f"Node: {node}")
         print("=" * 60)
-
-        # 메트릭 수집 대기
-        time.sleep(60)
+      env:
+      - name: NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
       resources:
         requests:
-          cpu: "500m"
-          memory: "512Mi"
+          cpu: "200m"
+          memory: "256Mi"
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
 
   #===========================================================================
-  # Step 2: 모델 학습
+  # Step 2: 모델 학습 (AI Storage Scheduler)
   #===========================================================================
   - name: train-step
     metadata:
       labels:
         pipeline-step: train
         workload-type: text
-    podSpecPatch: |
-      shareProcessNamespace: true
-      volumes:
-      - name: podinfo
-        downwardAPI:
-          items:
-          - path: "labels"
-            fieldRef:
-              fieldPath: metadata.labels
-          - path: "annotations"
-            fieldRef:
-              fieldPath: metadata.annotations
-    sidecars:
-    - name: insight-trace
-      image: ketidevit2/insight-trace:latest
-      imagePullPolicy: Always
-      env:
-      - name: POD_NAME
-        valueFrom:
-          fieldRef:
-            fieldPath: metadata.name
-      - name: POD_NAMESPACE
-        valueFrom:
-          fieldRef:
-            fieldPath: metadata.namespace
-      - name: NODE_NAME
-        valueFrom:
-          fieldRef:
-            fieldPath: spec.nodeName
-      - name: APOLLO_ENDPOINT
-        value: "apollo-policy-server.keti.svc.cluster.local:50051"
-      - name: PIPELINE_STEP
-        value: "train"
-      - name: REPORT_INTERVAL
-        value: "15s"
-      - name: IS_PIPELINE
-        value: "true"
-      resources:
-        requests:
-          cpu: "50m"
-          memory: "64Mi"
-      volumeMounts:
-      - name: pipeline-data
-        mountPath: /data
-        readOnly: true
-      - name: podinfo
-        mountPath: /etc/podinfo
-        readOnly: true
+      annotations:
+        ai-storage.keti/preprocessing-type: "aggregation"
+        ai-storage.keti/io-pattern: "balanced"
+        ai-storage.keti/workload-stage: "training"
+    schedulerName: ai-storage-scheduler
+    tolerations:
+    - operator: Exists
     container:
       image: python:3.11-slim
       command: [python3, -c]
@@ -219,126 +138,74 @@ spec:
         import random
 
         sys.argv[0] = 'llama_pytorch_trainer.py'
+        node = os.environ.get('NODE_NAME', 'unknown')
 
         print("=" * 60)
         print("[STEP 2/3] Model Training")
+        print(f"Scheduled Node: {node}")
         print("=" * 60)
-        print("Model: LLaMA-7B")
+        print("Model: LLaMA-7B (Simulated)")
         print("Framework: PyTorch + HuggingFace")
 
         os.makedirs('/data/checkpoints', exist_ok=True)
 
-        # 전처리 데이터 확인
         if os.path.exists('/data/tokens/train_tokens.bin'):
             print("✓ Preprocessed data found")
         else:
             print("⚠ Using simulated data")
 
-        EPOCHS = 3
-        STEPS_PER_EPOCH = 20
+        EPOCHS = 2
+        STEPS_PER_EPOCH = 5
 
         for epoch in range(EPOCHS):
             print(f"\n[Epoch {epoch+1}/{EPOCHS}]")
-            epoch_loss = 0
-
             for step in range(STEPS_PER_EPOCH):
                 loss = 2.0 - (epoch * 0.3) - (step * 0.02) + random.uniform(-0.05, 0.05)
-                epoch_loss += loss
-
-                # 체크포인트 저장
                 with open(f'/data/checkpoints/step_{epoch}_{step}.bin', 'wb') as f:
                     f.write(os.urandom(1024 * 1024))
+                print(f"  Step {step+1}/{STEPS_PER_EPOCH}: loss={loss:.4f}")
+                time.sleep(5)
 
-                if step % 5 == 0:
-                    print(f"  Step {step}/{STEPS_PER_EPOCH}: loss={loss:.4f}")
-
-                time.sleep(5)  # 5초씩
-
-            # 에폭 체크포인트
             ckpt_path = f'/data/checkpoints/llama_epoch_{epoch+1}.pt'
             with open(ckpt_path, 'wb') as f:
-                f.write(os.urandom(50 * 1024 * 1024))  # 50MB
-            print(f"  Checkpoint saved: {ckpt_path}")
+                f.write(os.urandom(10 * 1024 * 1024))
+            print(f"  Checkpoint: {ckpt_path}")
 
-        # 최종 모델 저장
         with open('/data/checkpoints/llama_final.pt', 'wb') as f:
-            f.write(os.urandom(100 * 1024 * 1024))  # 100MB
+            f.write(os.urandom(20 * 1024 * 1024))
 
         print("\n" + "=" * 60)
         print("[STEP 2/3] Training COMPLETED")
-        print("Output: /data/checkpoints/llama_final.pt")
+        print(f"Node: {node}")
         print("=" * 60)
-
-        time.sleep(60)
+      env:
+      - name: NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
       resources:
         requests:
-          cpu: "1000m"
-          memory: "2Gi"
-          nvidia.com/gpu: 1
-        limits:
-          cpu: "2000m"
-          memory: "4Gi"
-          nvidia.com/gpu: 1
+          cpu: "500m"
+          memory: "512Mi"
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
 
   #===========================================================================
-  # Step 3: 모델 평가
+  # Step 3: 모델 평가 (AI Storage Scheduler)
   #===========================================================================
   - name: evaluate-step
     metadata:
       labels:
         pipeline-step: evaluate
         workload-type: text
-    podSpecPatch: |
-      shareProcessNamespace: true
-      volumes:
-      - name: podinfo
-        downwardAPI:
-          items:
-          - path: "labels"
-            fieldRef:
-              fieldPath: metadata.labels
-          - path: "annotations"
-            fieldRef:
-              fieldPath: metadata.annotations
-    sidecars:
-    - name: insight-trace
-      image: ketidevit2/insight-trace:latest
-      imagePullPolicy: Always
-      env:
-      - name: POD_NAME
-        valueFrom:
-          fieldRef:
-            fieldPath: metadata.name
-      - name: POD_NAMESPACE
-        valueFrom:
-          fieldRef:
-            fieldPath: metadata.namespace
-      - name: NODE_NAME
-        valueFrom:
-          fieldRef:
-            fieldPath: spec.nodeName
-      - name: APOLLO_ENDPOINT
-        value: "apollo-policy-server.keti.svc.cluster.local:50051"
-      - name: PIPELINE_STEP
-        value: "evaluate"
-      - name: REPORT_INTERVAL
-        value: "15s"
-      - name: IS_PIPELINE
-        value: "true"
-      resources:
-        requests:
-          cpu: "50m"
-          memory: "64Mi"
-      volumeMounts:
-      - name: pipeline-data
-        mountPath: /data
-        readOnly: true
-      - name: podinfo
-        mountPath: /etc/podinfo
-        readOnly: true
+      annotations:
+        ai-storage.keti/preprocessing-type: "filtering"
+        ai-storage.keti/io-pattern: "read-heavy"
+        ai-storage.keti/workload-stage: "evaluation"
+    schedulerName: ai-storage-scheduler
+    tolerations:
+    - operator: Exists
     container:
       image: python:3.11-slim
       command: [python3, -c]
@@ -348,24 +215,25 @@ spec:
         import sys
         import os
         import random
+        import json
 
         sys.argv[0] = 'llama_model_evaluator.py'
+        node = os.environ.get('NODE_NAME', 'unknown')
 
         print("=" * 60)
         print("[STEP 3/3] Model Evaluation")
+        print(f"Scheduled Node: {node}")
         print("=" * 60)
         print("Task: Evaluate LLaMA model performance")
 
         os.makedirs('/data/results', exist_ok=True)
 
-        # 모델 로드 확인
         model_path = '/data/checkpoints/llama_final.pt'
         if os.path.exists(model_path):
             print(f"✓ Model loaded: {model_path}")
         else:
             print("⚠ Using simulated model")
 
-        # 평가 메트릭
         metrics = {
             'perplexity': random.uniform(15, 25),
             'bleu_score': random.uniform(0.3, 0.5),
@@ -374,9 +242,9 @@ spec:
         }
 
         print("\nRunning evaluation...")
-        for i in range(10):
-            print(f"  Evaluating batch {i+1}/10...")
-            time.sleep(10)  # 10초씩
+        for i in range(5):
+            print(f"  Evaluating batch {i+1}/5...")
+            time.sleep(5)
 
         print("\n" + "=" * 60)
         print("Evaluation Results:")
@@ -384,28 +252,23 @@ spec:
         for metric, value in metrics.items():
             print(f"  {metric}: {value:.4f}")
 
-        # 결과 저장
         with open('/data/results/evaluation.json', 'w') as f:
-            import json
             json.dump(metrics, f, indent=2)
 
         print("\n" + "=" * 60)
         print("[STEP 3/3] Evaluation COMPLETED")
-        print("Output: /data/results/evaluation.json")
+        print(f"Node: {node}")
         print("=" * 60)
         print("\n🎉 PIPELINE COMPLETED SUCCESSFULLY!")
-
-        time.sleep(60)
+      env:
+      - name: NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
       resources:
         requests:
-          cpu: "500m"
-          memory: "1Gi"
+          cpu: "200m"
+          memory: "256Mi"
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
-
-# ============================================
-# GitOps Test Marker
-# Timestamp: $(date)
-# This comment triggers ArgoCD sync
-# ============================================
