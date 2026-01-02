@@ -403,3 +403,9 @@ spec:
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
+
+# ============================================
+# GitOps Test Marker
+# Timestamp: $(date)
+# This comment triggers ArgoCD sync
+# ============================================
