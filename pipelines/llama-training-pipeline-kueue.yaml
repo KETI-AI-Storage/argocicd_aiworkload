@@ -6,7 +6,9 @@
 #   - train: PyTorchJob + Insight-Trace Sidecar (Kueue + AI Storage Scheduler)
 #   - evaluate: Argo Pod + Insight-Trace Sidecar (AI Storage Scheduler)
 #
-# Insight-Trace: APOLLO 워크로드 모니터링 사이드카
+# 워크로드 특성 자동 감지:
+#   Insight-Trace 사이드카 → APOLLO → AI Storage Scheduler
+#   (io-pattern, preprocessing-type 등 수동 annotation 불필요)
 ###############################################################################
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
@@ -15,8 +17,6 @@ metadata:
   namespace: kubeflow-user-example-com
   labels:
     app: llama-pipeline
-    kueue-enabled: "true"
-    insight-trace-enabled: "true"
 spec:
   entrypoint: llama-pipeline
   serviceAccountName: default-editor
@@ -49,11 +49,6 @@ spec:
   # Step 1: 전처리 + Insight-Trace 사이드카
   ###########################################################################
   - name: preprocess-step
-    metadata:
-      annotations:
-        ai-storage.keti/preprocessing-type: "transformation"
-        ai-storage.keti/io-pattern: "write-heavy"
-        insight-trace/workload-type: "preprocessing"
     schedulerName: ai-storage-scheduler
     tolerations:
     - operator: Exists
@@ -84,9 +79,7 @@ spec:
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
-    # =========================================================================
-    # Insight-Trace 사이드카: APOLLO 워크로드 모니터링
-    # =========================================================================
+    # Insight-Trace 사이드카: I/O 패턴 분석 → APOLLO 전송
     sidecars:
     - name: insight-trace
       image: ketidevit2/insight-trace:latest
@@ -111,7 +104,7 @@ spec:
         value: "10"
       - name: REPORT_INTERVAL_SECONDS
         value: "15"
-      - name: ORCHESTRATOR_ENDPOINT
+      - name: APOLLO_ENDPOINT
         value: "apollo-policy-server.keti.svc.cluster.local:50051"
       resources:
         requests:
@@ -138,26 +131,18 @@ spec:
           labels:
             kueue.x-k8s.io/queue-name: ai-storage-queue
             workflow-name: "{{workflow.name}}"
-            insight-trace-enabled: "true"
         spec:
           pytorchReplicaSpecs:
             Master:
               replicas: 1
               restartPolicy: OnFailure
               template:
-                metadata:
-                  annotations:
-                    ai-storage.keti/preprocessing-type: "aggregation"
-                    ai-storage.keti/io-pattern: "balanced"
-                    insight-trace/workload-type: "training"
                 spec:
                   schedulerName: ai-storage-scheduler
                   tolerations:
                   - operator: Exists
                   containers:
-                  #############################################################
                   # 메인 학습 컨테이너
-                  #############################################################
                   - name: pytorch
                     image: python:3.11-slim
                     command: [python3, -c]
@@ -182,9 +167,7 @@ spec:
                       requests:
                         cpu: "200m"
                         memory: "256Mi"
-                  #############################################################
                   # Insight-Trace 사이드카
-                  #############################################################
                   - name: insight-trace
                     image: ketidevit2/insight-trace:latest
                     env:
@@ -208,7 +191,7 @@ spec:
                       value: "10"
                     - name: REPORT_INTERVAL_SECONDS
                       value: "15"
-                    - name: ORCHESTRATOR_ENDPOINT
+                    - name: APOLLO_ENDPOINT
                       value: "apollo-policy-server.keti.svc.cluster.local:50051"
                     resources:
                       requests:
@@ -222,11 +205,6 @@ spec:
   # Step 3: 평가 + Insight-Trace 사이드카
   ###########################################################################
   - name: evaluate-step
-    metadata:
-      annotations:
-        ai-storage.keti/preprocessing-type: "filtering"
-        ai-storage.keti/io-pattern: "read-heavy"
-        insight-trace/workload-type: "evaluation"
     schedulerName: ai-storage-scheduler
     tolerations:
     - operator: Exists
@@ -260,9 +238,7 @@ spec:
       volumeMounts:
       - name: pipeline-data
         mountPath: /data
-    # =========================================================================
     # Insight-Trace 사이드카
-    # =========================================================================
     sidecars:
     - name: insight-trace
       image: ketidevit2/insight-trace:latest
@@ -287,7 +263,7 @@ spec:
         value: "10"
       - name: REPORT_INTERVAL_SECONDS
         value: "15"
-      - name: ORCHESTRATOR_ENDPOINT
+      - name: APOLLO_ENDPOINT
         value: "apollo-policy-server.keti.svc.cluster.local:50051"
       resources:
         requests:
