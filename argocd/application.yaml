@@ -15,7 +15,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/KETI-AI-Storage/argocicd_aiworload.git
+    repoURL: https://github.com/KETI-AI-Storage/argocicd_aiworkload.git
     targetRevision: main
     path: workloads
 
